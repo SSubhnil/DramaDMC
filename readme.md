@@ -1,6 +1,18 @@
 # Drama: Mamba-Enabled Model-Based Reinforcement Learning Is Sample and Parameter Efficient
 
-This repository provides an implementation of model-based reinforcement learning (MBRL) with Mamba, Mamba-2, and Transformer architectures.
+This repository provides an implementation of [Drama](https://openreview.net/forum?id=7XIkRgYjK3&nesting=2&sort=date-desc): a Mamba/Mamba2 powered model based reinforcement learning agent.
+
+If you find Drama useful, please reference in your paper:
+```
+@inproceedings{
+    wang2025drama,
+    title={Drama: Mamba-Enabled Model-Based Reinforcement Learning Is Sample and Parameter Efficient},
+    author={Wenlong Wang and Ivana dusparic and Yucheng Shi and Ke Zhang and Vinny Cahill},
+    booktitle={The Thirteenth International Conference on Learning Representations},
+    year={2025},
+    url={https://openreview.net/forum?id=7XIkRgYjK3}
+}
+```
 
 
 ## Training and Evaluating Instructions
@@ -54,16 +66,3 @@ We've referenced several other projects during the development of this code:
 - [Mamba/Mamba-2](https://github.com/state-spaces/mamba)
 - [STORM](https://github.com/weipu-zhang/STORM) 
 - [DreamerV3](https://github.com/danijar/dreamerv3)
-
-<!-- ## Bibtex
-
-```
-@inproceedings{
-    zhang2023storm,
-    title={{STORM}: Efficient Stochastic Transformer based World Models for Reinforcement Learning},
-    author={Weipu Zhang and Gang Wang and Jian Sun and Yetian Yuan and Gao Huang},
-    booktitle={Thirty-seventh Conference on Neural Information Processing Systems},
-    year={2023},
-    url={https://openreview.net/forum?id=WxnrX42rnS}
-}
-``` -->
