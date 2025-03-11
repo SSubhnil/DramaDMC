@@ -1,3 +1,4 @@
+import gym.spaces
 import torch
 import torch.nn as nn
 import torch.nn.init as init
@@ -111,6 +112,9 @@ class ActorCriticAgent(nn.Module):
         self.unimix_ratio = conf.Models.Agent.Unimix_ratio
         self.device = device
 
+        # Add action space type detection
+        self.is_discrete = getattr(conf.BasicSettings, 'ActionSpaceType', 'discrete') == 'discrete'
+
         self.symlog_twohot_loss = SymLogTwoHotLoss(255, -20, 20)
         act = getattr(nn, conf.Models.Agent.AC.Act)
 
@@ -120,16 +124,16 @@ class ActorCriticAgent(nn.Module):
             RMSNorm(actor_hidden_dim),
             act()
         ]
-        for i in range(num_layers - 1):
-            actor.extend([
-                layer_init(nn.Linear(actor_hidden_dim, actor_hidden_dim, bias=True)),
-                RMSNorm(actor_hidden_dim),
-                act()
-            ])
-        self.actor = nn.Sequential(
-            *actor,
-            layer_init(nn.Linear(actor_hidden_dim, action_dim), std=0.001)
-        ).to(device)
+        # Different output head based on action space type
+        if self.is_discrete:
+            actor_output = layer_init(nn.Linear(actor_hidden_dim, action_dim), std=0.001)
+        else:
+            # For continuous actions, output means and log stds
+            actor_output = nn.Sequential(
+                layer_init(nn.Linear(actor_hidden_dim, 2 * action_dim), std=0.001),
+            )
+
+        self.actor = nn.Sequential(*actor, actor_output).to(device)
         
 
         critic = [
@@ -174,9 +178,15 @@ class ActorCriticAgent(nn.Module):
             slow_param.data.copy_(slow_param.data * decay + param.data * (1 - decay))
 
     def policy(self, x):
-        logits = self.actor(x)
-        logits = self.unimix(logits)
-        return logits
+        if self.is_discrete:
+            logits = self.actor(x)
+            logits = self.unimix(logits)
+            return logits
+        else:
+            action_params = self.actor(x)
+            mean, log_std = torch.chunk(action_params, 2, dim=-1)
+            std = torch.exp(torch.clamp(log_std, -20, 2))
+            return mean, std
 
     def value(self, x):
         value = self.critic(x)
@@ -207,13 +217,25 @@ class ActorCriticAgent(nn.Module):
     def sample(self, latent, greedy=False):
         self.eval()
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
-            logits = self.policy(latent)
-            dist = distributions.Categorical(logits=logits)
-            if greedy:
-                action = dist.probs.argmax(dim=-1)
+            if self.is_discrete:
+                logits = self.policy(latent)
+                dist = distributions.Categorical(logits=logits)
+                if greedy:
+                    action = dist.probs.argmax(dim=-1)
+                else:
+                    action = dist.sample()
+                return action, logits
             else:
-                action = dist.sample()
-        return action, logits
+                mean, std = self.policy(latent)
+                normal = torch.distributions.Normal(mean, std)
+                if greedy:
+                    action = mean
+                else:
+                    action = normal.rsample()  # Use reparameterization trick
+
+                # Clip to valid action range [-1, 1] (typical for DM Control)
+                action = torch.clamp(action, -1.0, 1.0)
+                return action, (mean, std)
 
     def sample_as_env_action(self, latent, greedy=False):
         action, _ = self.sample(latent, greedy)
@@ -225,10 +247,18 @@ class ActorCriticAgent(nn.Module):
         '''
         self.train()
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16, enabled=self.use_amp):
-            logits, raw_value = self.get_logits_raw_value(latent)
-            dist = distributions.Categorical(logits=logits[:, :-1])
-            log_prob = dist.log_prob(action)
-            entropy = dist.entropy()
+            if self.is_discrete:
+                logits, raw_value = self.get_logits_raw_value(latent)
+                dist = distributions.Categorical(logits=logits[:, :-1])
+                log_prob = dist.log_prob(action)
+                entropy = dist.entropy()
+            else:
+                action_params, raw_value = self.get_logits_raw_value(latent)
+                mean, log_std = torch.chunk(action_params[:, :-1], 2, dim=-1)
+                std = torch.exp(torch.clamp(log_std, -20, 2))
+                normal = torch.distributions.Normal(mean, std)
+                log_prob = normal.log_prob(action).sum(dim=-1)  # Sum across action dimensions
+                entropy = normal.entropy().sum(dim=-1)  # Sum across action dimensions
 
             # decode value, calc lambda return
             slow_value = self.slow_value(latent)

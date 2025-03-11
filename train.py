@@ -1,4 +1,5 @@
-import gymnasium
+import os
+os.environ["MUJOCO_GL"] = "egl" # osmesa, glfw
 import argparse
 import numpy as np
 from einops import rearrange
@@ -6,7 +7,6 @@ import torch
 from collections import deque
 from tqdm import tqdm
 import colorama
-import os
 import pandas as pd
 
 from utils import seed_np_torch, WandbLogger
@@ -18,9 +18,12 @@ from line_profiler import profile
 import yaml
 from envs.my_memory_maze import MemoryMaze
 from envs.my_atari import Atari
+from envs.dmc_wrapper import DMControl
 from eval import eval_episodes
 import warnings
 import ast
+
+
 
 
 @profile
@@ -89,7 +92,7 @@ def world_model_imagine_data(replay_buffer: ReplayBuffer,
             logger=logger, global_step=global_step
         )
     return latent, action, old_logits, context_latent, sample_reward, sample_termination, reward_hat, termination_hat
-
+# last_dist_feat_shape
 @profile
 def joint_train_world_model_agent(config, logdir,
                                   replay_buffer: ReplayBuffer,
@@ -102,6 +105,12 @@ def joint_train_world_model_agent(config, logdir,
         env = Atari(config.BasicSettings.Env_name, size=(config.BasicSettings.ImageSize,config.BasicSettings.ImageSize), seed=config.BasicSettings.Seed)
     elif config.BasicSettings.Env_name.startswith('memory'):
         env = MemoryMaze(config.BasicSettings.Env_name, size=(config.BasicSettings.ImageSize,config.BasicSettings.ImageSize), seed=config.BasicSettings.Seed)
+    elif config.BasicSettings.Env_name.startswith('dm_control'):
+        env = DMControl(config.BasicSettings.Env_name,
+                        size=(config.BasicSettings.ImageSize, config.BasicSettings.ImageSize),
+                        camera=getattr(config.BasicSettings, 'DMControlRenderCamera', 0),
+                        seed=config.BasicSettings.Seed)
+        config.BasicSettings.ActionSpaceType = 'continuous'
     else:
         assert ValueError(f'Unknown environment name: {config.BasicSettings.Env_name}')
     print("Current env: " + colorama.Fore.YELLOW + f"{config.BasicSettings.Env_name}" + colorama.Style.RESET_ALL)
@@ -142,7 +151,7 @@ def joint_train_world_model_agent(config, logdir,
         else:
             action = env.action_space.sample()
 
-        ob, reward, is_last, info = env.step(action)
+        ob, reward, is_last, _, info = env.step(action)
         replay_buffer.append(current_ob, action, reward, info['is_terminal'])
 
         sum_reward += reward
@@ -206,8 +215,13 @@ def joint_train_world_model_agent(config, logdir,
                 global_step=total_steps
             )
 
-        if config.Evaluate.DuringTraining and total_steps % (config.Evaluate.EverySteps // config.JointTrainAgent.NumEnvs) == 0:
-            _ = eval_episodes(config, world_model, agent, logger, total_steps)
+        if config.Evaluate.DuringTraining and total_steps % (
+                config.Evaluate.EverySteps // config.JointTrainAgent.NumEnvs) == 0:
+            try:
+                _ = eval_episodes(config, world_model, agent, logger, total_steps)
+            except Exception as e:
+                logger.log("Evaluation error", str(e), global_step=total_steps)
+                print(f"Evaluation failed with error: {e}")
         if config.JointTrainAgent.SaveModels and total_steps % (config.JointTrainAgent.SaveEverySteps // config.JointTrainAgent.NumEnvs) == 0:
             print(colorama.Fore.GREEN + f"Saving model at total steps {total_steps}" + colorama.Style.RESET_ALL)
             torch.save(world_model.state_dict(), f"{logdir}/ckpt/world_model.pth")
@@ -355,12 +369,15 @@ if __name__ == "__main__":
     # getting action_dim with dummy env
     if config.BasicSettings.Env_name.startswith('ALE'):
         dummy_env = Atari(config.BasicSettings.Env_name)
+        action_dim = dummy_env.action_space.n
     elif config.BasicSettings.Env_name.startswith('memory'):
         dummy_env = MemoryMaze(config.BasicSettings.Env_name)
+        action_dim = dummy_env.action_space.n
+    elif config.BasicSettings.Env_name.startswith('dm_control'):
+        dummy_env = DMControl(config.BasicSettings.Env_name)
+        action_dim = dummy_env.action_space.shape[0]  # Continuous action
     else:
         assert ValueError(f'Unknown environment name: {config.BasicSettings.Env_name}')
-
-    action_dim = dummy_env.action_space.n
 
     # build world model and agent
     world_model = build_world_model(config, action_dim, device=device)

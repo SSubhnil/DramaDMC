@@ -173,6 +173,7 @@ class MixerModel(nn.Module):
         residual_in_fp32=False,
         device=None,
         dtype=None,
+        is_discrete: bool = False
     ) -> None:
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -180,6 +181,7 @@ class MixerModel(nn.Module):
 
         self.action_dim = action_dim
         self.feat_dim = d_model
+        self.is_discrete = is_discrete
 
         # self.embedding = nn.Embedding(vocab_size, d_model, **factory_kwargs)
 
@@ -245,8 +247,42 @@ class MixerModel(nn.Module):
         }
 
     def forward(self, samples, action, inference_params=None, **mixer_kwargs):
-        action = F.one_hot(action.long(), self.action_dim).float()
-        hidden_states = self.stem(torch.cat([samples, action], dim=-1))
+        # First, ensure the action has the right dimension for concatenation
+        if samples.dim() > action.dim():
+            # For samples shape [batch_size, seq_len, feature_dim] and action shape [batch_size, action_dim]
+            # Reshape action to [batch_size, seq_len, action_dim]
+            if samples.dim() == 3 and action.dim() == 2:
+                action = action.unsqueeze(1).expand(-1, samples.size(1), -1)
+
+        # Only apply one-hot encoding for discrete actions
+        if hasattr(self, 'is_discrete') and self.is_discrete:
+            action = F.one_hot(action.long(), self.action_dim).float()
+        else:
+            action = action.float()
+
+        # Now concatenate along the feature dimension
+        concat_tensor = torch.cat([samples, action], dim=-1)
+
+        # Add dimension checking
+        expected_dim = self.stem[0].weight.size(1)
+        actual_dim = concat_tensor.size(-1)
+
+        if actual_dim != expected_dim:
+            # Apply projection or padding to match dimensions
+            if hasattr(self, 'action_projector'):
+                concat_tensor = self.action_projector(concat_tensor)
+            else:
+                # Emergency fix - pad or truncate to match expected dimensions
+                if actual_dim > expected_dim:
+                    concat_tensor = concat_tensor[..., :expected_dim]
+                else:
+                    pad_size = expected_dim - actual_dim
+                    padding = torch.zeros(concat_tensor.shape[:-1] + (pad_size,),
+                                          device=concat_tensor.device,
+                                          dtype=concat_tensor.dtype)
+                    concat_tensor = torch.cat([concat_tensor, padding], dim=-1)
+
+        hidden_states = self.stem(concat_tensor)
             
         residual = None
         for layer in self.layers:
@@ -299,6 +335,7 @@ class MambaWrapperModel(nn.Module, GenerationMixin):
         factory_kwargs = {"device": device, "dtype": dtype}
 
         super().__init__()
+        self.is_discrete = getattr(config, 'is_discrete', False)
         self.backbone = MixerModel(
             d_model=d_model,
             n_layer=n_layer,
@@ -314,10 +351,10 @@ class MambaWrapperModel(nn.Module, GenerationMixin):
             initializer_cfg=initializer_cfg,
             fused_add_norm=fused_add_norm,
             residual_in_fp32=residual_in_fp32,
+            is_discrete=self.is_discrete,
             **factory_kwargs,
         )
         # self.lm_head = nn.Linear(d_model, vocab_size, bias=False, **factory_kwargs)
-
         # Initialize weights and apply final processing
         self.apply(
             partial(

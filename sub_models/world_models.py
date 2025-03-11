@@ -287,6 +287,7 @@ class WorldModel(nn.Module):
                 stoch_dim=self.stoch_flattened_dim,
                 action_dim=action_dim,
                 dropout_p=config.Models.WorldModel.Dropout,
+                is_discrete=(config.BasicSettings.ActionSpaceType == 'discrete'),
                 ssm_cfg={
                     'd_state': config.Models.WorldModel.Mamba.ssm_cfg.d_state,
                     }
@@ -300,6 +301,7 @@ class WorldModel(nn.Module):
                 stoch_dim=self.stoch_flattened_dim,
                 action_dim=action_dim,
                 dropout_p=config.Models.WorldModel.Dropout,
+                is_discrete=(getattr(config.BasicSettings, 'ActionSpaceType', 'discrete') == 'discrete'),
                 ssm_cfg={
                     'd_state': config.Models.WorldModel.Mamba.ssm_cfg.d_state, 
                     'layer': 'Mamba2'}
@@ -459,7 +461,8 @@ class WorldModel(nn.Module):
             self.imagine_batch_length = imagine_batch_length
             latent_size = (imagine_batch_size, imagine_batch_length+1, self.stoch_flattened_dim)
             hidden_size = (imagine_batch_size, imagine_batch_length+1, self.hidden_state_dim)
-            scalar_size = (imagine_batch_size, imagine_batch_length)
+            # scalar_size = (imagine_batch_size, imagine_batch_length)
+            scalar_size = (imagine_batch_size, imagine_batch_length, 1)
             self.sample_buffer = torch.zeros(latent_size, dtype=dtype, device=device)
             self.dist_feat_buffer = torch.zeros(hidden_size, dtype=dtype, device=device)
             self.action_buffer = torch.zeros(scalar_size, dtype=dtype, device=device)
@@ -573,7 +576,17 @@ class WorldModel(nn.Module):
             while not should_stop(sample_list[-1], inference_params):
                 action, logits = agent.sample(torch.cat([self.sample_buffer[:, i:i+1], self.dist_feat_buffer[:, i:i+1]], dim=-1))
                 action_list.append(action)
-                self.action_buffer[:, i:i+1] = action
+
+                if action.dim() > 2:
+                    # For actions with more than 2 dimensions
+                    self.action_buffer[:, i:i + 1] = action.view(action.size(0), 1, 1)
+                elif action.dim() == 1:
+                    # For flat actions [batch_size]
+                    self.action_buffer[:, i:i + 1] = action.view(-1, 1, 1)
+                else:
+                    # For actions already in [batch_size, 1] format
+                    self.action_buffer[:, i:i + 1] = action.unsqueeze(-1)
+
                 old_logits_list.append(logits)
                 dist_feat = get_hidden_state(sample_list[-1], action_list[-1], inference_params)
                 dist_feat_list.append(dist_feat)

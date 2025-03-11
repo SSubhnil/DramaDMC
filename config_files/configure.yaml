@@ -1,9 +1,10 @@
 BasicSettings:
   ImageSize: 64
   ImageChannel: 3
+  ActionSpaceType: continuous
   ReplayBufferOnGPU: True
   Seed: 3710
-  Env_name: ALE/Pong-v5
+  Env_name: dm_control/cartpole-balance #ALE/Pong-v5 # dm_control/cartpole-balance
   Device: cuda:0
   Use_amp: True
   Use_cg: True
@@ -12,7 +13,7 @@ BasicSettings:
 
 Evaluate:
    EpisodeNum: 10
-   NumEnvs: 10
+   NumEnvs: 4
    DuringTraining: True
    EverySteps: 1000
 
@@ -24,7 +25,7 @@ JointTrainAgent:
   NumEnvs: 1
   BatchSize: 16
   BatchLength: 128
-  ImagineBatchSize: 1024
+  ImagineBatchSize: 512
   ImagineContextLength: 8
   ImagineBatchLength: 16
   RealityContextLength: 16
@@ -143,6 +144,6 @@ Models:
         HiddenUnits: 512 # Andrychowicz2020 wider critic network seems better  
 Wandb:
   Init:
-    Mode: online
+    Mode: disabled
     Project: Mamba_dreamer
 n: standard
