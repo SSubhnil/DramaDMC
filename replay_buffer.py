@@ -14,16 +14,28 @@ class ReplayBuffer():
         obs_shape = (config.BasicSettings.ImageSize, config.BasicSettings.ImageSize, config.BasicSettings.ImageChannel)
         self.device = device
 
+        # Determine action dimensions based on action space type
+        self.is_continuous = getattr(config.BasicSettings, 'ActionSpaceType', 'discrete') == 'continuous'
+        action_shape = () if not self.is_continuous else (config.Models.Agent.action_dim,)  # Default for discrete (scalar)
+
+        # if self.is_continuous:
+        #     # For DMC environments, get the action dimension
+        #     if hasattr(config.Models.Agent, 'action_dim'):
+        #         action_shape = (config.Models.Agent.action_dim,)
+        #     else:
+        #         # If not specified in config, use a default approach
+        #         action_shape = (6,)  # Default for walker-walk, will be replaced with actual dim
+
         if self.store_on_gpu:
             self.obs_buffer = torch.empty((max_length, *obs_shape), dtype=torch.uint8, device=device, requires_grad=False)
-            self.action_buffer = torch.empty((max_length), dtype=torch.float32, device=device, requires_grad=False)
+            self.action_buffer = torch.empty((max_length, *action_shape), dtype=torch.float32, device=device, requires_grad=False)
             self.reward_buffer = torch.empty((max_length), dtype=torch.float32, device=device, requires_grad=False)
             self.termination_buffer = torch.empty((max_length), dtype=torch.float32, device=device, requires_grad=False)
             self.sampled_counter = torch.zeros((max_length), dtype=torch.int32, device=device, requires_grad=False)
             self.imagined_counter = torch.zeros((max_length), dtype=torch.int32, device=device, requires_grad=False)
         else:
             self.obs_buffer = np.empty((max_length, *obs_shape), dtype=np.uint8)
-            self.action_buffer = np.empty((max_length), dtype=np.float32)
+            self.action_buffer = np.empty((max_length, *action_shape), dtype=np.float32)
             self.reward_buffer = np.empty((max_length), dtype=np.float32)
             self.termination_buffer = np.empty((max_length), dtype=np.float32)
             self.sampled_counter = np.zeros((max_length), dtype=np.int32)
@@ -132,7 +144,11 @@ class ReplayBuffer():
         self.last_pointer = (self.last_pointer + 1) % (self.max_length)
         if self.store_on_gpu:
             self.obs_buffer[self.last_pointer] = torch.from_numpy(obs)
-            self.action_buffer[self.last_pointer] = torch.tensor(action, device=self.device)
+            # Handle both scalar and vector actions
+            if isinstance(action, np.ndarray):
+                self.action_buffer[self.last_pointer] = torch.tensor(action, device=self.device)
+            else:
+                self.action_buffer[self.last_pointer] = torch.tensor([action], device=self.device)
             self.reward_buffer[self.last_pointer] = torch.tensor(reward, device=self.device)
             self.termination_buffer[self.last_pointer] = torch.tensor(termination, device=self.device)
         else:

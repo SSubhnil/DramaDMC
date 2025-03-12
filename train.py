@@ -1,3 +1,8 @@
+import os
+os.environ['MUJOCO_GL'] = 'osmesa'
+os.environ['PYOPENGL_PLATFORM'] = 'osmesa'
+os.environ['__EGL_VENDOR_LIBRARY_FILENAMES'] = '/usr/lib/x86_64-linux-gnu/mesa/libEGL.so.1'
+os.environ['__GLX_VENDOR_LIBRARY_NAME'] = 'mesa'
 import gymnasium
 import argparse
 import numpy as np
@@ -6,7 +11,7 @@ import torch
 from collections import deque
 from tqdm import tqdm
 import colorama
-import os
+
 import pandas as pd
 
 from utils import seed_np_torch, WandbLogger
@@ -113,10 +118,16 @@ def joint_train_world_model_agent(config, logdir,
         assert ValueError(f'Unknown environment name: {config.BasicSettings.Env_name}')
     print("Current env: " + colorama.Fore.YELLOW + f"{config.BasicSettings.Env_name}" + colorama.Style.RESET_ALL)
 
-    atari_benchmark_df = pd.read_csv("atari_performance.csv", index_col='Task', usecols=lambda column: column in ['Task', 'Alien', 'Amidar', 'Assault', 'Asterix', 'BankHeist', 'BattleZone', 'Boxing', 'Breakout', 'ChopperCommand', 'CrazyClimber', 'DemonAttack', 'Freeway', 'Frostbite', 'Gopher', 'Hero', 'Jamesbond', 'Kangaroo', 'Krull', 'KungFuMaster', 'MsPacman', 'Pong', 'PrivateEye', 'Qbert', 'RoadRunner', 'Seaquest', 'UpNDown'])
-    atari_pure_name = config.BasicSettings.Env_name.split('/')[-1].split('-')[0]
-    game_benchmark_df = atari_benchmark_df.get(atari_pure_name)
-    
+    # Check if using DM Control
+    is_dm_control = config.BasicSettings.Env_name.startswith('dm_control')
+
+    atari_benchmark_df = None
+    game_benchmark_df = None
+    if not is_dm_control:
+        atari_benchmark_df = pd.read_csv("atari_performance.csv", index_col='Task', usecols=lambda column: column in ['Task', 'Alien', 'Amidar', 'Assault', 'Asterix', 'BankHeist', 'BattleZone', 'Boxing', 'Breakout', 'ChopperCommand', 'CrazyClimber', 'DemonAttack', 'Freeway', 'Frostbite', 'Gopher', 'Hero', 'Jamesbond', 'Kangaroo', 'Krull', 'KungFuMaster', 'MsPacman', 'Pong', 'PrivateEye', 'Qbert', 'RoadRunner', 'Seaquest', 'UpNDown'])
+        atari_pure_name = config.BasicSettings.Env_name.split('/')[-1].split('-')[0]
+        game_benchmark_df = atari_benchmark_df.get(atari_pure_name)
+
     sum_reward = 0
     current_ob, info = env.reset()
     context_obs = deque(maxlen=config.JointTrainAgent.RealityContextLength)
@@ -157,9 +168,11 @@ def joint_train_world_model_agent(config, logdir,
 
         if is_last:
             logger.log(f"episode/score", sum_reward, global_step=total_steps)
-            logger.log(f"episode/length", info["episode_frame_number"], global_step=total_steps)  # framskip=4
-            if config.BasicSettings.Env_name.startswith('ALE'):
-                logger.log(f"episode/normalised score", (sum_reward - game_benchmark_df['Random'])/(game_benchmark_df['Human'] - game_benchmark_df['Random']), global_step=total_steps)
+            logger.log(f"episode/length", info["episode_frame_number"], global_step=total_steps)
+            # Only log normalized scores for Atari environments
+            if not is_dm_control and game_benchmark_df is not None:
+                logger.log(f"episode/normalised score", (sum_reward - game_benchmark_df['Random']) / (
+                            game_benchmark_df['Human'] - game_benchmark_df['Random']), global_step=total_steps)
                 for algorithm in game_benchmark_df.index[2:]:
                     denominator = game_benchmark_df[algorithm] - game_benchmark_df['Random']
                     if denominator != 0:
@@ -369,6 +382,8 @@ if __name__ == "__main__":
     elif config.BasicSettings.Env_name.startswith('dm_control'):
         dummy_env = DMControl(config.BasicSettings.Env_name)
         action_dim = dummy_env.action_space.shape[0]  # Continuous action
+        # Add action_dim to config so ReplayBuffer can access it
+        config.update_or_create('Models.Agent.action_dim', action_dim)
     else:
         assert ValueError(f'Unknown environment name: {config.BasicSettings.Env_name}')
 

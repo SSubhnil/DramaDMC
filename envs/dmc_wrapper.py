@@ -1,9 +1,8 @@
-# In env_wrapper.py
 import gymnasium as gym
 import numpy as np
 from dm_control import suite
 from shimmy.dm_control_compatibility import DmControlCompatibilityV0
-
+import os
 
 class DMControl(gym.Env):
     def __init__(
@@ -16,6 +15,12 @@ class DMControl(gym.Env):
     ):
         # Parse domain and task from name (e.g., "dm_control/cartpole-balance")
         domain_name, task_name = name.split('/')[-1].split('-')
+
+        # Configure rendering mode based on worker index
+        worker_id = os.getenv('WORKER_ID', '0')
+        # Only worker 0 renders with EGL, others use CPU rendering
+        if worker_id != '0':
+            os.environ['MUJOCO_GL'] = 'osmesa'
 
         # Create DM Control environment
         self._env = suite.load(domain_name, task_name, task_kwargs={'random': seed})
@@ -47,7 +52,7 @@ class DMControl(gym.Env):
             _, reward, terminated, truncated, info = self._env.step(action)
 
             # Get image observation instead
-            image = self._env._env.physics.render(
+            image = self._env.physics.render(
                 height=self._size[0],
                 width=self._size[1],
                 camera_id=self._env.camera_id
@@ -69,7 +74,7 @@ class DMControl(gym.Env):
         _, info = self._env.reset(seed=self._seed)
 
         # Get image observation instead
-        image = self._env._env.physics.render(
+        image = self._env.physics.render(
             height=self._size[0],
             width=self._size[1],
             camera_id=self._env.camera_id
