@@ -38,6 +38,8 @@ class DMControl(gym.Env):
         self._size = size
         self._seed = seed
 
+        self.episode_steps = 0
+
         # Set action and observation spaces
         self.action_space = self._env.action_space
         self.observation_space = gym.spaces.Box(
@@ -67,6 +69,8 @@ class DMControl(gym.Env):
         info['is_terminal'] = terminated  # Store termination state in info
         image = np.ascontiguousarray(image)
 
+        self.episode_steps += 1
+        info['episode_frame_number'] = self.episode_steps
         return image, total_reward, is_last, info
 
     def reset(self):
@@ -80,7 +84,7 @@ class DMControl(gym.Env):
             camera_id=self._env.camera_id
         )
         image = np.ascontiguousarray(image)
-
+        self.episode_steps = 0
         return image, info
 
     def close(self):

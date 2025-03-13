@@ -246,6 +246,11 @@ class MixerModel(nn.Module):
         }
 
     def forward(self, samples, action, inference_params=None, **mixer_kwargs):
+        # print("Mixer model actions dtype:", action.dtype)
+        # print("mixer model samples dtype:", samples.dtype)
+        samples = samples.to(torch.float32)
+        action = action.to(torch.float32)
+        # Added
         if hasattr(self, 'is_discrete') and self.is_discrete:
             # One-hot encode discrete actions
             action = F.one_hot(action.long(), self.action_dim).float()
@@ -256,7 +261,7 @@ class MixerModel(nn.Module):
                 action = action.unsqueeze(-1) if action.size(-1) == 1 else action
 
         hidden_states = self.stem(torch.cat([samples, action], dim=-1))
-            
+        # print("Made it past the hidden state concat")
         residual = None
         for layer in self.layers:
             hidden_states, residual = layer(
@@ -308,7 +313,7 @@ class MambaWrapperModel(nn.Module, GenerationMixin):
         factory_kwargs = {"device": device, "dtype": dtype}
 
         super().__init__()
-        self.is_discrete = getattr(config, 'is_discrete', True)
+        self.is_discrete = getattr(config, 'is_discrete', False)
         self.backbone = MixerModel(
             d_model=d_model,
             n_layer=n_layer,
@@ -345,6 +350,8 @@ class MambaWrapperModel(nn.Module, GenerationMixin):
         """
         num_last_tokens: if > 0, only return the logits for the last n tokens
         """
+        samples = samples.to(torch.float32)
+        action = action.to(torch.float32)
         hidden_states = self.backbone(samples, action, inference_params=inference_params, **mixer_kwargs)
         if num_last_tokens > 0:
             hidden_states = hidden_states[:, -num_last_tokens:]

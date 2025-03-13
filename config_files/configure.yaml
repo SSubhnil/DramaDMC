@@ -1,7 +1,7 @@
 BasicSettings:
   ImageSize: 64
   ImageChannel: 3
-  ActionSpaceType: continuous
+  ActionSpaceType: continuous # OR discrete
   ReplayBufferOnGPU: True
   Seed: 3710
   Env_name: dm_control/walker-walk #ALE/Pong-v5 # dm_control/cartpole-balance
@@ -12,7 +12,7 @@ BasicSettings:
   SavePath: None
 
 Evaluate:
-   EpisodeNum: 10
+   EpisodeNum: 4
    NumEnvs: 1
    DuringTraining: True
    EverySteps: 1000
@@ -20,8 +20,8 @@ Evaluate:
 JointTrainAgent:
   SampleMaxSteps: 105000 # Just to make sure the last episode will finish, no training after 100k
   BufferMaxLength: 100000
-  WorldModelWarmUp: 500
-  BehaviourWarmUp: 500
+  WorldModelWarmUp: 1032
+  BehaviourWarmUp: 1032
   NumEnvs: 1
   BatchSize: 16
   BatchLength: 128

@@ -78,6 +78,7 @@ def world_model_imagine_data(replay_buffer: ReplayBuffer,
     agent.eval()
     sample_obs, sample_action, sample_reward, sample_termination = replay_buffer.sample(
         imagine_batch_size, imagine_context_length, imagine=True)
+    # sample_action = sample_action.to(torch.float32)
     if world_model.model == 'Transformer':
         latent, action, old_logits, context_latent, reward_hat, termination_hat = world_model.imagine_data(
             agent, sample_obs, sample_action,
@@ -129,13 +130,18 @@ def joint_train_world_model_agent(config, logdir,
         game_benchmark_df = atari_benchmark_df.get(atari_pure_name)
 
     sum_reward = 0
+    # print("Starting environment reset")
     current_ob, info = env.reset()
+    # print("Environment reset complete")
     context_obs = deque(maxlen=config.JointTrainAgent.RealityContextLength)
     context_action = deque(maxlen=config.JointTrainAgent.RealityContextLength)
 
     # sample and train
     for total_steps in tqdm(range(config.JointTrainAgent.SampleMaxSteps // config.JointTrainAgent.NumEnvs), desc='Training'):
         # sample part >>>
+        # print(f"Step {total_steps}: Starting action selection")
+        # Print replay buffer state
+        # print(f"Buffer length: {len(replay_buffer)}, WM ready: {replay_buffer.ready('world_model')}")
         if replay_buffer.ready('world_model'):
             world_model.eval()
             agent.eval()
@@ -145,7 +151,11 @@ def joint_train_world_model_agent(config, logdir,
                 else:
                     context_latent = world_model.encode_obs(torch.cat(list(context_obs), dim=1).to(world_model.device))
                     model_context_action = np.stack(list(context_action))
-                    model_context_action = rearrange(torch.Tensor(model_context_action).to(world_model.device), "L -> 1 L")
+                    model_context_action = torch.Tensor(model_context_action).to(world_model.device)
+                    if len(model_context_action.shape) == 1:  # Discrete actions
+                        model_context_action = rearrange(model_context_action, "L -> 1 L")
+                    else:  # Continuous actions
+                        model_context_action = rearrange(model_context_action, "L D -> 1 L D")
                     if world_model.model == 'Transformer':
                         prior_flattened_sample, last_dist_feat = world_model.calc_last_dist_feat(context_latent, model_context_action)
                     elif world_model.model == 'Mamba' or world_model.model == 'Mamba2':
@@ -160,9 +170,13 @@ def joint_train_world_model_agent(config, logdir,
         else:
             action = env.action_space.sample()
 
-        ob, reward, is_last, info = env.step(action)
-        replay_buffer.append(current_ob, action, reward, info['is_terminal'])
+        # print(f"Step {total_steps}: Action selected")
+        # print(f"Step {total_steps}: Starting environment step")
 
+        ob, reward, is_last, info = env.step(action)
+        # print(f"Step {total_steps}: Finished environment step")
+        replay_buffer.append(current_ob, action, reward, info['is_terminal'])
+        # print(f"Step {total_steps}: Buffer appended")
         sum_reward += reward
         current_ob = ob
 
@@ -178,13 +192,11 @@ def joint_train_world_model_agent(config, logdir,
                     if denominator != 0:
                         normalized_score = (sum_reward - game_benchmark_df['Random']) / denominator
                         logger.log(f"benchmark/normalised {algorithm} score", normalized_score, global_step=total_steps)
-            
+
             sum_reward = 0
             ob, info = env.reset()
             context_obs.clear()
             context_action.clear()
-
-
 
         if replay_buffer.ready('world_model') and total_steps % (config.JointTrainAgent.TrainDynamicsEverySteps // config.JointTrainAgent.NumEnvs) == 0 and total_steps <= config.JointTrainAgent.FreezeWorldModelAfterSteps:
             train_world_model_step(
@@ -197,10 +209,10 @@ def joint_train_world_model_agent(config, logdir,
                 global_step=total_steps
             )
 
-
+        # print(f"Step {total_steps}: Trained world model")
         if replay_buffer.ready('behaviour') and total_steps % (config.JointTrainAgent.TrainAgentEverySteps // config.JointTrainAgent.NumEnvs) == 0 and total_steps <= config.JointTrainAgent.FreezeBehaviourAfterSteps:
             log_video = total_steps % (config.JointTrainAgent.SaveEverySteps // config.JointTrainAgent.NumEnvs) == 0
-
+            # print(f"Step {total_steps}: Video logged")
             imagine_latent, agent_action, old_logits, context_latent, context_reward, context_termination, imagine_reward, imagine_termination = world_model_imagine_data(
                 replay_buffer=replay_buffer,
                 world_model=world_model,
@@ -212,6 +224,7 @@ def joint_train_world_model_agent(config, logdir,
                 logger=logger,
                 global_step=total_steps
             )
+            print(f"Step {total_steps}: Imagination rollout")
 
             agent.update(
                 latent=imagine_latent,
@@ -225,9 +238,12 @@ def joint_train_world_model_agent(config, logdir,
                 logger=logger,
                 global_step=total_steps
             )
+            print(f"Step {total_steps}: Trained agent")
 
-        if config.Evaluate.DuringTraining and total_steps % (config.Evaluate.EverySteps // config.JointTrainAgent.NumEnvs) == 0:
+        if config.Evaluate.DuringTraining and total_steps > 0 and total_steps % (config.Evaluate.EverySteps // config.JointTrainAgent.NumEnvs) == 0 and\
+            replay_buffer.ready('world_model'):
             _ = eval_episodes(config, world_model, agent, logger, total_steps)
+            print(f"Step {total_steps}: Evaluation Complete")
         if config.JointTrainAgent.SaveModels and total_steps % (config.JointTrainAgent.SaveEverySteps // config.JointTrainAgent.NumEnvs) == 0:
             print(colorama.Fore.GREEN + f"Saving model at total steps {total_steps}" + colorama.Style.RESET_ALL)
             torch.save(world_model.state_dict(), f"{logdir}/ckpt/world_model.pth")

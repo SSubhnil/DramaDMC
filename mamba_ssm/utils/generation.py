@@ -682,11 +682,21 @@ def capture_graph(
     model, inference_params, batch_size, max_seqlen, embedding_dim, decoding_seqlen=1, mempool=None, n_warmups=2
 ):
     device = next(iter(model.parameters())).device
-    samples = torch.full((batch_size, decoding_seqlen, embedding_dim), 0, dtype=torch.long, device=device)
-    action = torch.full((batch_size, decoding_seqlen), 0, dtype=torch.long, device=device)
+    samples = torch.full((batch_size, decoding_seqlen, embedding_dim), 0, dtype=torch.float32, device=device)
+    # action = torch.full((batch_size, decoding_seqlen), 0, dtype=torch.float32, device=device)
     seqlen_offset_og = inference_params.seqlen_offset
     inference_params.seqlen_offset = max_seqlen - decoding_seqlen
     inference_params.lengths_per_sample[:] = inference_params.seqlen_offset
+    # Check if model handles continuous actions
+    is_continuous = hasattr(model, 'is_discrete') and not model.is_discrete
+
+    if is_continuous:
+        # For continuous actions, include action_dim
+        action_dim = model.action_dim if hasattr(model, 'action_dim') else model.backbone.action_dim
+        action = torch.full((batch_size, decoding_seqlen, action_dim), 0, dtype=torch.float32, device=device)
+    else:
+        # For discrete actions (original behavior)
+        action = torch.full((batch_size, decoding_seqlen), 0, dtype=torch.float32, device=device)
 
     with torch.cuda.device(device):
         # Warmup before capture

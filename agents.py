@@ -224,6 +224,7 @@ class ActorCriticAgent(nn.Module):
                     action = dist.probs.argmax(dim=-1)
                 else:
                     action = dist.sample()
+
                 return action, logits
             else:
                 mean, std = self.policy(latent)
@@ -235,7 +236,8 @@ class ActorCriticAgent(nn.Module):
 
                 # Clip to valid action range [-1, 1] (typical for DM Control)
                 action = torch.clamp(action, -1.0, 1.0)
-                return action, (mean, std)
+                action = action.float()
+                return action, torch.cat([mean, std], dim=-1)
 
     def sample_as_env_action(self, latent, greedy=False):
         action, _ = self.sample(latent, greedy)

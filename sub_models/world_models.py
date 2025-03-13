@@ -290,7 +290,9 @@ class WorldModel(nn.Module):
                 ssm_cfg={
                     'd_state': config.Models.WorldModel.Mamba.ssm_cfg.d_state,
                     }
-                )                                
+                )
+            # Add this explicit setting:
+            mamba_config.is_discrete = (getattr(config.BasicSettings, 'ActionSpaceType', 'discrete') == 'discrete')
             self.sequence_model = MambaWrapperModel(mamba_config)
         elif self.model == 'Mamba2':
             mamba_config = MambaConfig(
@@ -462,7 +464,17 @@ class WorldModel(nn.Module):
             scalar_size = (imagine_batch_size, imagine_batch_length)
             self.sample_buffer = torch.zeros(latent_size, dtype=dtype, device=device)
             self.dist_feat_buffer = torch.zeros(hidden_size, dtype=dtype, device=device)
-            self.action_buffer = torch.zeros(scalar_size, dtype=dtype, device=device)
+
+            is_continuous = hasattr(self.sequence_model, 'is_discrete') and not self.sequence_model.is_discrete
+            if is_continuous:
+                # For continuous actions, include action dimensions
+                action_dim = self.sequence_model.backbone.action_dim
+                self.action_buffer = torch.zeros((imagine_batch_size, imagine_batch_length, action_dim),
+                                                 dtype=dtype, device=device)
+            else:
+                # For discrete actions (original behavior)
+                self.action_buffer = torch.zeros(scalar_size, dtype=dtype, device=device)
+
             self.reward_hat_buffer = torch.zeros(scalar_size, dtype=dtype, device=device)
             self.termination_hat_buffer = torch.zeros(scalar_size, dtype=dtype, device=device)
     @profile
@@ -511,9 +523,11 @@ class WorldModel(nn.Module):
     @profile
     def imagine_data2(self, agent: agents.ActorCriticAgent, sample_obs, sample_action,
                      imagine_batch_size, imagine_batch_length, log_video, logger, global_step):
+        sample_action = sample_action.to(torch.float32).clone()
         self.init_imagine_buffer(imagine_batch_size, imagine_batch_length, dtype=self.tensor_dtype, device=self.device)
         # context
         context_latent = self.encode_obs(sample_obs)
+        context_latent = context_latent.to(torch.float32).clone() # Ensure latent is float32
         batch_size, seqlen_og, embedding_dim = context_latent.shape
         max_length = imagine_batch_length + seqlen_og
         
@@ -536,7 +550,8 @@ class WorldModel(nn.Module):
         
         def get_hidden_state(samples, action, inference_params):
             decoding = inference_params.seqlen_offset > 0
-
+            samples = samples.to(torch.float32).clone()
+            action = action.to(torch.float32).clone()
             if not self.use_cg or not decoding:
                 hidden_state = self.sequence_model(
                     samples, action,
@@ -574,6 +589,14 @@ class WorldModel(nn.Module):
                 action, logits = agent.sample(torch.cat([self.sample_buffer[:, i:i+1], self.dist_feat_buffer[:, i:i+1]], dim=-1))
                 action_list.append(action)
                 self.action_buffer[:, i:i+1] = action
+                # Handle both discrete and continuous action types
+                # if isinstance(logits, tuple):
+                #     # For continuous actions, store both mean and std
+                #     mean, std = logits
+                #     # Either concatenate them or just use the mean
+                #     old_logits_list.append(torch.cat([mean, std], dim=-1))
+                # else:
+                    # For discrete actions, use as is
                 old_logits_list.append(logits)
                 dist_feat = get_hidden_state(sample_list[-1], action_list[-1], inference_params)
                 dist_feat_list.append(dist_feat)
