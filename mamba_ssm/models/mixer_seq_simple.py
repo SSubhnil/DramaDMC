@@ -30,20 +30,20 @@ except ImportError:
 
 
 def create_block(
-    d_model,
-    d_intermediate,
-    ssm_cfg=None,
-    attn_layer_idx=None,
-    attn_cfg=None,
-    pff_cfg=None,
-    dropout_p=0.0,
-    norm_epsilon=1e-5,
-    rms_norm=False,
-    residual_in_fp32=False,
-    fused_add_norm=False,
-    layer_idx=None,
-    device=None,
-    dtype=None,
+        d_model,
+        d_intermediate,
+        ssm_cfg=None,
+        attn_layer_idx=None,
+        attn_cfg=None,
+        pff_cfg=None,
+        dropout_p=0.0,
+        norm_epsilon=1e-5,
+        rms_norm=False,
+        residual_in_fp32=False,
+        fused_add_norm=False,
+        layer_idx=None,
+        device=None,
+        dtype=None,
 ):
     if ssm_cfg is None:
         ssm_cfg = {}
@@ -52,7 +52,7 @@ def create_block(
     if attn_cfg is None:
         attn_cfg = {}
     if pff_cfg is None:
-        pff_cfg = {}        
+        pff_cfg = {}
     factory_kwargs = {"device": device, "dtype": dtype}
     if layer_idx not in attn_layer_idx:
         # Create a copy of the config to modify
@@ -92,11 +92,11 @@ def create_block(
 
 # https://github.com/huggingface/transformers/blob/c28d04e9e252a1a099944e325685f14d242ecdcd/src/transformers/models/gpt2/modeling_gpt2.py#L454
 def _init_weights(
-    module,
-    n_layer,
-    initializer_range=0.02,  # Now only used for embedding layer.
-    rescale_prenorm_residual=True,
-    n_residuals_per_layer=1,  # Change to 2 if we have MLP
+        module,
+        n_layer,
+        initializer_range=0.02,  # Now only used for embedding layer.
+        rescale_prenorm_residual=True,
+        n_residuals_per_layer=1,  # Change to 2 if we have MLP
 ):
     if isinstance(module, nn.Linear):
         if module.bias is not None:
@@ -122,13 +122,14 @@ def _init_weights(
                 with torch.no_grad():
                     p /= math.sqrt(n_residuals_per_layer * n_layer)
 
+
 class PositionalEncoding1D(nn.Module):
     def __init__(
-        self,
-        max_length: int,
-        embed_dim: int,
-        device=None,
-        dtype=None
+            self,
+            max_length: int,
+            embed_dim: int,
+            device=None,
+            dtype=None
     ):
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -149,31 +150,31 @@ class PositionalEncoding1D(nn.Module):
         pos_emb = self.pos_emb(torch.arange(self.max_length, device=feat.device))
         pos_emb = repeat(pos_emb, "L D -> B L D", B=feat.shape[0])
 
-        feat = feat + pos_emb[:, position:position+1, :]
+        feat = feat + pos_emb[:, position:position + 1, :]
         return feat
 
 
 class MixerModel(nn.Module):
     def __init__(
-        self,
-        d_model: int,
-        n_layer: int,
-        d_intermediate: int,
-        stoch_dim: int,
-        action_dim: int,
-        ssm_cfg=None,
-        attn_layer_idx=None,
-        attn_cfg=None,
-        pff_cfg=None,
-        dropout_p: float = 0.0,        
-        norm_epsilon: float = 1e-5,
-        rms_norm: bool = False,
-        initializer_cfg=None,
-        fused_add_norm=False,
-        residual_in_fp32=False,
-        device=None,
-        dtype=None,
-        is_discrete: bool = False
+            self,
+            d_model: int,
+            n_layer: int,
+            d_intermediate: int,
+            stoch_dim: int,
+            action_dim: int,
+            ssm_cfg=None,
+            attn_layer_idx=None,
+            attn_cfg=None,
+            pff_cfg=None,
+            dropout_p: float = 0.0,
+            norm_epsilon: float = 1e-5,
+            rms_norm: bool = False,
+            initializer_cfg=None,
+            fused_add_norm=False,
+            residual_in_fp32=False,
+            device=None,
+            dtype=None,
+            is_discrete: bool = False
     ) -> None:
         factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
@@ -185,13 +186,13 @@ class MixerModel(nn.Module):
         # self.embedding = nn.Embedding(vocab_size, d_model, **factory_kwargs)
 
         self.stem = nn.Sequential(
-            nn.Linear(stoch_dim+action_dim, d_model, bias=True, **factory_kwargs),
+            nn.Linear(stoch_dim + action_dim, d_model, bias=True, **factory_kwargs),
             RMSNorm(d_model, eps=norm_epsilon, **factory_kwargs),
             nn.SiLU(),
             # nn.Linear(stoch_dim+action_dim, d_model, bias=True, **factory_kwargs),
             # nn.modules.normalization.RMSNorm(d_model, **factory_kwargs),
         )
-     
+
         # We change the order of residual and layer norm:
         # Instead of LN -> Attn / MLP -> Add, we do:
         # Add -> LN -> Attn / MLP / Mixer, returning both the residual branch (output of Add) and
@@ -202,7 +203,7 @@ class MixerModel(nn.Module):
             if layer_norm_fn is None or rms_norm_fn is None:
                 raise ImportError("Failed to import Triton LayerNorm / RMSNorm kernels")
         else:
-            self.dropout = nn.Dropout(dropout_p) # "Attention is all you need sec 5.4 dropout"
+            self.dropout = nn.Dropout(dropout_p)  # "Attention is all you need sec 5.4 dropout"
         self.dropout_p = dropout_p
 
         self.layers = nn.ModuleList(
@@ -290,11 +291,11 @@ class MixerModel(nn.Module):
 class MambaWrapperModel(nn.Module, GenerationMixin):
 
     def __init__(
-        self,
-        config: MambaConfig,
-        initializer_cfg=None,
-        device=None,
-        dtype=None,
+            self,
+            config: MambaConfig,
+            initializer_cfg=None,
+            device=None,
+            dtype=None,
     ) -> None:
         self.config = config
         d_model = config.d_model
@@ -305,7 +306,7 @@ class MambaWrapperModel(nn.Module, GenerationMixin):
         ssm_cfg = config.ssm_cfg
         attn_layer_idx = config.attn_layer_idx
         attn_cfg = config.attn_cfg
-        pff_cfg = config.pff_cfg 
+        pff_cfg = config.pff_cfg
         dropout_p = config.dropout_p
         rms_norm = config.rms_norm
         residual_in_fp32 = config.residual_in_fp32
@@ -321,7 +322,7 @@ class MambaWrapperModel(nn.Module, GenerationMixin):
             stoch_dim=stoch_dim,
             action_dim=action_dim,
             ssm_cfg=ssm_cfg,
-            pff_cfg = pff_cfg,         
+            pff_cfg=pff_cfg,
             attn_layer_idx=attn_layer_idx,
             attn_cfg=attn_cfg,
             dropout_p=dropout_p,
